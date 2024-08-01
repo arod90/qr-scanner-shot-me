@@ -1,113 +1,254 @@
-import Image from "next/image";
+'use client';
+
+import React, { useState, useEffect, useRef } from 'react';
+import { supabase } from '../lib/supabaseClient';
+import Webcam from 'react-webcam';
+import QrScanner from 'qr-scanner';
+import DatePicker from 'react-datepicker';
+import { format, isSameDay } from 'date-fns';
+import { IoLocationOutline } from 'react-icons/io5';
+import { FaCheckCircle, FaTimesCircle } from 'react-icons/fa';
+import 'react-datepicker/dist/react-datepicker.css';
+import './calendar.css';
 
 export default function Home() {
+  const [selectedDate, setSelectedDate] = useState(new Date());
+  const [showCalendar, setShowCalendar] = useState(false);
+  const [selectedEvent, setSelectedEvent] = useState(null);
+  const [events, setEvents] = useState([]);
+  const [showScanner, setShowScanner] = useState(false);
+  const [scanResult, setScanResult] = useState(null);
+  const [admittedPeople, setAdmittedPeople] = useState([]);
+  const webcamRef = useRef(null);
+  const [qrScanner, setQrScanner] = useState(null);
+  const audioRef = useRef(null);
+  const [scanning, setScanning] = useState(false);
+
+  useEffect(() => {
+    fetchEvents();
+  }, []);
+
+  useEffect(() => {
+    if (showScanner && webcamRef.current && !scanning) {
+      const scanner = new QrScanner(
+        webcamRef.current.video,
+        (result) => handleScan(result),
+        { returnDetailedScanResult: true }
+      );
+      scanner.start().then(() => setScanning(true));
+      setQrScanner(scanner);
+
+      return () => {
+        if (scanner) {
+          scanner.destroy();
+        }
+        setQrScanner(null);
+        setScanning(false);
+      };
+    }
+  }, [showScanner, webcamRef]);
+
+  async function fetchEvents() {
+    const { data, error } = await supabase
+      .from('events')
+      .select('*')
+      .order('event_date', { ascending: true });
+    if (error) console.error('Error fetching events:', error);
+    else setEvents(data);
+  }
+
+  async function handleScan(result) {
+    if (result && selectedEvent && qrScanner) {
+      qrScanner.stop();
+      setScanning(false);
+      try {
+        const { data: ticket, error } = await supabase
+          .from('userevents')
+          .select('*, events(event_name), users(first_name, last_name)')
+          .eq('qr_code', result.data)
+          .single();
+
+        if (error) throw error;
+
+        if (ticket.event_id !== selectedEvent.id) {
+          setScanResult({
+            status: 'error',
+            message: `This ticket is for event "${ticket.events.event_name}" and not valid for this event.`,
+          });
+        } else if (ticket.used) {
+          setScanResult({ status: 'error', message: 'Ticket already used' });
+        } else {
+          const { error: updateError } = await supabase
+            .from('userevents')
+            .update({ used: true })
+            .eq('id', ticket.id);
+
+          if (updateError) throw updateError;
+
+          setScanResult({
+            status: 'success',
+            message: `Valid ticket. Entry granted for ${ticket.users.first_name} ${ticket.users.last_name}.`,
+          });
+          await fetchAdmittedPeople();
+          if (audioRef.current) {
+            audioRef.current.play();
+          }
+        }
+      } catch (error) {
+        console.error('Error:', error);
+        setScanResult({ status: 'error', message: 'Invalid ticket' });
+      }
+      setShowScanner(false);
+    }
+  }
+
+  async function fetchAdmittedPeople() {
+    if (!selectedEvent) return;
+
+    const { data, error } = await supabase
+      .from('userevents')
+      .select('*, users(first_name, last_name)')
+      .eq('event_id', selectedEvent.id)
+      .eq('used', true)
+      .order('purchase_date', { ascending: false });
+
+    if (error) console.error('Error fetching admitted people:', error);
+    else setAdmittedPeople(data);
+  }
+
+  const handleScannerToggle = () => {
+    setShowScanner(!showScanner);
+    setScanResult(null);
+    setScanning(false);
+  };
+
+  const handleDateChange = (date) => {
+    setSelectedDate(date);
+    setSelectedEvent(null);
+    setScanResult(null);
+    setShowCalendar(false);
+  };
+
+  const getEventsForSelectedDate = () => {
+    return events.filter((event) =>
+      isSameDay(new Date(event.event_date), selectedDate)
+    );
+  };
+
+  const hasEventOnDate = (date) => {
+    return events.some((event) => isSameDay(new Date(event.event_date), date));
+  };
+
   return (
-    <main className="flex min-h-screen flex-col items-center justify-between p-24">
-      <div className="z-10 max-w-5xl w-full items-center justify-between font-mono text-sm lg:flex">
-        <p className="fixed left-0 top-0 flex w-full justify-center border-b border-gray-300 bg-gradient-to-b from-zinc-200 pb-6 pt-8 backdrop-blur-2xl dark:border-neutral-800 dark:bg-zinc-800/30 dark:from-inherit lg:static lg:w-auto  lg:rounded-xl lg:border lg:bg-gray-200 lg:p-4 lg:dark:bg-zinc-800/30">
-          Get started by editing&nbsp;
-          <code className="font-mono font-bold">app/page.js</code>
-        </p>
-        <div className="fixed bottom-0 left-0 flex h-48 w-full items-end justify-center bg-gradient-to-t from-white via-white dark:from-black dark:via-black lg:static lg:h-auto lg:w-auto lg:bg-none">
-          <a
-            className="pointer-events-none flex place-items-center gap-2 p-8 lg:pointer-events-auto lg:p-0"
-            href="https://vercel.com?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            By{" "}
-            <Image
-              src="/vercel.svg"
-              alt="Vercel Logo"
-              className="dark:invert"
-              width={100}
-              height={24}
-              priority
-            />
-          </a>
+    <div className="container mx-auto p-4 max-w-md bg-black text-white min-h-screen">
+      <h1 className="text-4xl font-bold mb-4 text-left text-white font-bebas-neue">
+        {format(selectedDate, 'MMMM d, yyyy')}
+      </h1>
+
+      <button
+        className="mb-4 p-2 bg-[#333333] text-white rounded w-full font-oswald"
+        onClick={() => setShowCalendar(!showCalendar)}
+      >
+        {showCalendar ? 'Hide Calendar' : 'Change Date'}
+      </button>
+
+      {showCalendar && (
+        <div className="mb-4">
+          <DatePicker
+            selected={selectedDate}
+            onChange={handleDateChange}
+            inline
+            className="!bg-[#333333] !text-white"
+            renderDayContents={(day, date) => (
+              <div className="relative">
+                {day}
+                {hasEventOnDate(date) && <div className="event-dot"></div>}
+              </div>
+            )}
+          />
         </div>
-      </div>
+      )}
 
-      <div className="relative flex place-items-center before:absolute before:h-[300px] before:w-full sm:before:w-[480px] before:-translate-x-1/2 before:rounded-full before:bg-gradient-radial before:from-white before:to-transparent before:blur-2xl before:content-[''] after:absolute after:-z-20 after:h-[180px] after:w-full sm:after:w-[240px] after:translate-x-1/3 after:bg-gradient-conic after:from-sky-200 after:via-blue-200 after:blur-2xl after:content-[''] before:dark:bg-gradient-to-br before:dark:from-transparent before:dark:to-blue-700 before:dark:opacity-10 after:dark:from-sky-900 after:dark:via-[#0141ff] after:dark:opacity-40 before:lg:h-[360px] z-[-1]">
-        <Image
-          className="relative dark:drop-shadow-[0_0_0.3rem_#ffffff70] dark:invert"
-          src="/next.svg"
-          alt="Next.js Logo"
-          width={180}
-          height={37}
-          priority
-        />
-      </div>
+      <select
+        className="mb-4 p-2 border rounded w-full text-white bg-[#333333] font-oswald"
+        value={selectedEvent?.id || ''}
+        onChange={(e) => {
+          const event = events.find((ev) => ev.id === e.target.value);
+          setSelectedEvent(event);
+          fetchAdmittedPeople();
+          setScanResult(null);
+        }}
+      >
+        <option value="">Select an event</option>
+        {getEventsForSelectedDate().map((event) => (
+          <option key={event.id} value={event.id}>
+            {event.event_name} - {format(new Date(event.event_date), 'HH:mm')}
+          </option>
+        ))}
+      </select>
 
-      <div className="mb-32 grid text-center lg:max-w-5xl lg:w-full lg:mb-0 lg:grid-cols-4 lg:text-left">
-        <a
-          href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Docs{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
+      {selectedEvent && (
+        <>
+          <div className="mb-4 text-left">
+            <h2 className="text-3xl font-bold text-white font-bebas-neue">
+              {selectedEvent.event_name}
+            </h2>
+            <div className="flex items-center text-[#B0B0B0] font-oswald">
+              <IoLocationOutline className="text-[#FF5252]" size={20} />
+              <span className="ml-1">{selectedEvent.location}</span>
+            </div>
+          </div>
+
+          <button
+            className="mb-4 p-2 bg-[#FF5252] text-white rounded w-full font-oswald"
+            onClick={handleScannerToggle}
+          >
+            {showScanner ? 'Hide Scanner' : 'Show Scanner'}
+          </button>
+
+          {showScanner && (
+            <div className="mb-4">
+              <Webcam
+                ref={webcamRef}
+                audio={false}
+                screenshotFormat="image/jpeg"
+                videoConstraints={{
+                  facingMode: 'environment',
+                }}
+                style={{ width: '100%', height: 'auto' }}
+              />
+            </div>
+          )}
+
+          {scanResult && (
+            <div
+              className={`mb-4 p-4 rounded text-center ${
+                scanResult.status === 'success' ? 'bg-green-700' : 'bg-red-700'
+              } font-oswald flex items-center justify-center scan-result`}
+            >
+              {scanResult.status === 'success' ? (
+                <FaCheckCircle size={24} className="mr-2" />
+              ) : (
+                <FaTimesCircle size={24} className="mr-2" />
+              )}
+              <span>{scanResult.message}</span>
+            </div>
+          )}
+
+          <h2 className="text-2xl font-bold mb-2 text-white font-bebas-neue">
+            Admitted People
           </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Find in-depth information about Next.js features and API.
-          </p>
-        </a>
-
-        <a
-          href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800 hover:dark:bg-opacity-30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Learn{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Learn about Next.js in an interactive course with&nbsp;quizzes!
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Templates{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50`}>
-            Explore starter templates for Next.js.
-          </p>
-        </a>
-
-        <a
-          href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template&utm_campaign=create-next-app"
-          className="group rounded-lg border border-transparent px-5 py-4 transition-colors hover:border-gray-300 hover:bg-gray-100 hover:dark:border-neutral-700 hover:dark:bg-neutral-800/30"
-          target="_blank"
-          rel="noopener noreferrer"
-        >
-          <h2 className={`mb-3 text-2xl font-semibold`}>
-            Deploy{" "}
-            <span className="inline-block transition-transform group-hover:translate-x-1 motion-reduce:transform-none">
-              -&gt;
-            </span>
-          </h2>
-          <p className={`m-0 max-w-[30ch] text-sm opacity-50 text-balance`}>
-            Instantly deploy your Next.js site to a shareable URL with Vercel.
-          </p>
-        </a>
-      </div>
-    </main>
+          <ul className="divide-y divide-gray-700 font-oswald">
+            {admittedPeople.map((ticket) => (
+              <li key={ticket.id} className="py-2">
+                {ticket.users.first_name} {ticket.users.last_name} -{' '}
+                {new Date(ticket.purchase_date).toLocaleTimeString()}
+              </li>
+            ))}
+          </ul>
+        </>
+      )}
+      <audio ref={audioRef} src="/success-chime.mp3" />
+    </div>
   );
 }
