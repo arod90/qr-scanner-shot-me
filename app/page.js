@@ -2,12 +2,11 @@
 
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
-import Webcam from 'react-webcam';
-import QrScanner from 'qr-scanner';
 import DatePicker from 'react-datepicker';
 import { format, isSameDay } from 'date-fns';
 import { IoLocationOutline } from 'react-icons/io5';
 import { FaCheckCircle, FaTimesCircle } from 'react-icons/fa';
+import { Html5QrcodeScanner } from 'html5-qrcode';
 import 'react-datepicker/dist/react-datepicker.css';
 import './calendar.css';
 
@@ -19,34 +18,25 @@ export default function Home() {
   const [showScanner, setShowScanner] = useState(false);
   const [scanResult, setScanResult] = useState(null);
   const [admittedPeople, setAdmittedPeople] = useState([]);
-  const webcamRef = useRef(null);
-  const [qrScanner, setQrScanner] = useState(null);
+  const scannerRef = useRef(null);
   const audioRef = useRef(null);
-  const [scanning, setScanning] = useState(false);
 
   useEffect(() => {
     fetchEvents();
   }, []);
 
   useEffect(() => {
-    if (showScanner && webcamRef.current && !scanning) {
-      const scanner = new QrScanner(
-        webcamRef.current.video,
-        (result) => handleScan(result),
-        { returnDetailedScanResult: true }
-      );
-      scanner.start().then(() => setScanning(true));
-      setQrScanner(scanner);
-
-      return () => {
-        if (scanner) {
-          scanner.destroy();
-        }
-        setQrScanner(null);
-        setScanning(false);
-      };
+    if (showScanner && !scannerRef.current) {
+      scannerRef.current = new Html5QrcodeScanner('reader', {
+        fps: 10,
+        qrbox: 250,
+      });
+      scannerRef.current.render(onScanSuccess, onScanError);
+    } else if (!showScanner && scannerRef.current) {
+      scannerRef.current.clear();
+      scannerRef.current = null;
     }
-  }, [showScanner, webcamRef]);
+  }, [showScanner]);
 
   async function fetchEvents() {
     const { data, error } = await supabase
@@ -57,15 +47,18 @@ export default function Home() {
     else setEvents(data);
   }
 
-  async function handleScan(result) {
-    if (result && selectedEvent && qrScanner) {
-      qrScanner.stop();
-      setScanning(false);
+  const onScanSuccess = async (decodedText) => {
+    if (selectedEvent) {
+      // Stop the scanner immediately
+      if (scannerRef.current) {
+        scannerRef.current.pause(true);
+      }
+
       try {
         const { data: ticket, error } = await supabase
           .from('userevents')
           .select('*, events(event_name), users(first_name, last_name)')
-          .eq('qr_code', result.data)
+          .eq('qr_code', decodedText)
           .single();
 
         if (error) throw error;
@@ -100,7 +93,11 @@ export default function Home() {
       }
       setShowScanner(false);
     }
-  }
+  };
+
+  const onScanError = (error) => {
+    console.warn(error);
+  };
 
   async function fetchAdmittedPeople() {
     if (!selectedEvent) return;
@@ -119,7 +116,6 @@ export default function Home() {
   const handleScannerToggle = () => {
     setShowScanner(!showScanner);
     setScanResult(null);
-    setScanning(false);
   };
 
   const handleDateChange = (date) => {
@@ -206,19 +202,7 @@ export default function Home() {
             {showScanner ? 'Hide Scanner' : 'Show Scanner'}
           </button>
 
-          {showScanner && (
-            <div className="mb-4">
-              <Webcam
-                ref={webcamRef}
-                audio={false}
-                screenshotFormat="image/jpeg"
-                videoConstraints={{
-                  facingMode: 'environment',
-                }}
-                style={{ width: '100%', height: 'auto' }}
-              />
-            </div>
-          )}
+          {showScanner && <div id="reader" className="mb-4"></div>}
 
           {scanResult && (
             <div
