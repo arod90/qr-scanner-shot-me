@@ -4,7 +4,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import DatePicker from 'react-datepicker';
 import { format, isSameDay } from 'date-fns';
-import { IoLocationOutline } from 'react-icons/io5';
+import { IoLocationOutline, IoCalendarOutline } from 'react-icons/io5';
 import { FaCheckCircle, FaTimesCircle } from 'react-icons/fa';
 import { Html5QrcodeScanner } from 'html5-qrcode';
 import 'react-datepicker/dist/react-datepicker.css';
@@ -29,7 +29,9 @@ export default function Home() {
     if (showScanner && !scannerRef.current) {
       scannerRef.current = new Html5QrcodeScanner('reader', {
         fps: 10,
-        qrbox: 250,
+        qrbox: { width: 250, height: 250 },
+        aspectRatio: 1.0,
+        facingMode: { exact: 'environment' },
       });
       scannerRef.current.render(onScanSuccess, onScanError);
     } else if (!showScanner && scannerRef.current) {
@@ -49,7 +51,6 @@ export default function Home() {
 
   const onScanSuccess = async (decodedText) => {
     if (selectedEvent) {
-      // Stop the scanner immediately
       if (scannerRef.current) {
         scannerRef.current.pause(true);
       }
@@ -137,19 +138,26 @@ export default function Home() {
 
   return (
     <div className="container mx-auto p-4 max-w-md bg-black text-white min-h-screen">
-      <h1 className="text-4xl font-bold mb-4 text-left text-white font-bebas-neue">
-        {format(selectedDate, 'MMMM d, yyyy')}
+      <h1 className="text-4xl font-bold mb-6 text-left text-white font-bebas-neue">
+        Event Scanner
       </h1>
 
+      <div className="mb-6 flex items-center">
+        <IoCalendarOutline className="text-[#FF5252] mr-2" size={24} />
+        <span className="text-2xl font-bold text-white font-bebas-neue">
+          {format(selectedDate, 'MMMM d, yyyy')}
+        </span>
+      </div>
+
       <button
-        className="mb-4 p-2 bg-[#333333] text-white rounded w-full font-oswald"
+        className="mb-6 p-4 bg-[#333333] text-white rounded-lg w-full font-oswald text-xl"
         onClick={() => setShowCalendar(!showCalendar)}
       >
         {showCalendar ? 'Hide Calendar' : 'Change Date'}
       </button>
 
       {showCalendar && (
-        <div className="mb-4">
+        <div className="mb-6">
           <DatePicker
             selected={selectedDate}
             onChange={handleDateChange}
@@ -166,7 +174,7 @@ export default function Home() {
       )}
 
       <select
-        className="mb-4 p-2 border rounded w-full text-white bg-[#333333] font-oswald"
+        className="mb-6 p-4 border rounded-lg w-full text-white bg-[#333333] font-oswald text-xl"
         value={selectedEvent?.id || ''}
         onChange={(e) => {
           const event = events.find((ev) => ev.id === e.target.value);
@@ -185,30 +193,32 @@ export default function Home() {
 
       {selectedEvent && (
         <>
-          <div className="mb-4 text-left">
+          <div className="mb-6 text-left">
             <h2 className="text-3xl font-bold text-white font-bebas-neue">
               {selectedEvent.event_name}
             </h2>
-            <div className="flex items-center text-[#B0B0B0] font-oswald">
-              <IoLocationOutline className="text-[#FF5252]" size={20} />
-              <span className="ml-1">{selectedEvent.location}</span>
+            <div className="flex items-center text-[#B0B0B0] font-oswald text-xl mt-2">
+              <IoLocationOutline className="text-[#FF5252]" size={24} />
+              <span className="ml-2">{selectedEvent.location}</span>
             </div>
           </div>
 
           <button
-            className="mb-4 p-2 bg-[#FF5252] text-white rounded w-full font-oswald"
+            className="mb-6 p-4 bg-[#FF5252] text-white rounded-lg w-full font-oswald text-xl"
             onClick={handleScannerToggle}
           >
-            {showScanner ? 'Hide Scanner' : 'Show Scanner'}
+            {showScanner ? 'Hide Scanner' : 'Scan QR Code'}
           </button>
 
-          {showScanner && <div id="reader" className="mb-4"></div>}
+          {showScanner && (
+            <div id="reader" className="mb-6 rounded-lg overflow-hidden"></div>
+          )}
 
           {scanResult && (
             <div
-              className={`mb-4 p-4 rounded text-center ${
+              className={`mb-6 p-4 rounded-lg text-center ${
                 scanResult.status === 'success' ? 'bg-green-700' : 'bg-red-700'
-              } font-oswald flex items-center justify-center scan-result`}
+              } font-oswald flex items-center justify-center scan-result text-xl`}
             >
               {scanResult.status === 'success' ? (
                 <FaCheckCircle size={24} className="mr-2" />
@@ -219,12 +229,12 @@ export default function Home() {
             </div>
           )}
 
-          <h2 className="text-2xl font-bold mb-2 text-white font-bebas-neue">
+          <h2 className="text-2xl font-bold mb-4 text-white font-bebas-neue">
             Admitted People
           </h2>
-          <ul className="divide-y divide-gray-700 font-oswald">
+          <ul className="divide-y divide-gray-700 font-oswald text-lg">
             {admittedPeople.map((ticket) => (
-              <li key={ticket.id} className="py-2">
+              <li key={ticket.id} className="py-3">
                 {ticket.users.first_name} {ticket.users.last_name} -{' '}
                 {new Date(ticket.purchase_date).toLocaleTimeString()}
               </li>
