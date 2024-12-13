@@ -21,6 +21,8 @@ export default function Home() {
   const scannerRef = useRef(null);
   const audioRef = useRef(null);
 
+  // !TODO the users admitted list stays present even if I jump to a different event, thjis list should be unique for each event.
+
   useEffect(() => {
     fetchEvents();
   }, []);
@@ -67,6 +69,53 @@ export default function Home() {
     else setEvents(data);
   }
 
+  // const onScanSuccess = async (decodedText) => {
+  //   if (selectedEvent) {
+  //     if (scannerRef.current) {
+  //       scannerRef.current.pause(true);
+  //     }
+
+  //     try {
+  //       const { data: ticket, error } = await supabase
+  //         .from('userevents')
+  //         .select('*, events(event_name), users(first_name, last_name)')
+  //         .eq('qr_code', decodedText)
+  //         .single();
+
+  //       if (error) throw error;
+
+  //       if (ticket.event_id !== selectedEvent.id) {
+  //         setScanResult({
+  //           status: 'error',
+  //           message: `This ticket is for event "${ticket.events.event_name}" and not valid for this event.`,
+  //         });
+  //       } else if (ticket.used) {
+  //         setScanResult({ status: 'error', message: 'Ticket already used' });
+  //       } else {
+  //         const { error: updateError } = await supabase
+  //           .from('userevents')
+  //           .update({ used: true })
+  //           .eq('id', ticket.id);
+
+  //         if (updateError) throw updateError;
+
+  //         setScanResult({
+  //           status: 'success',
+  //           message: `Valid ticket. Entry granted for ${ticket.users.first_name} ${ticket.users.last_name}.`,
+  //         });
+  //         await fetchAdmittedPeople();
+  //         if (audioRef.current) {
+  //           audioRef.current.play();
+  //         }
+  //       }
+  //     } catch (error) {
+  //       console.error('Error:', error);
+  //       setScanResult({ status: 'error', message: 'Invalid ticket' });
+  //     }
+  //     setShowScanner(false);
+  //   }
+  // };
+
   const onScanSuccess = async (decodedText) => {
     if (selectedEvent) {
       if (scannerRef.current) {
@@ -88,8 +137,12 @@ export default function Home() {
             message: `This ticket is for event "${ticket.events.event_name}" and not valid for this event.`,
           });
         } else if (ticket.used) {
-          setScanResult({ status: 'error', message: 'Ticket already used' });
+          setScanResult({
+            status: 'error',
+            message: 'Ticket already used',
+          });
         } else {
+          // Update ticket to used
           const { error: updateError } = await supabase
             .from('userevents')
             .update({ used: true })
@@ -97,18 +150,45 @@ export default function Home() {
 
           if (updateError) throw updateError;
 
+          // Create check-in record
+          const { error: checkinError } = await supabase
+            .from('checkins')
+            .insert({
+              user_id: ticket.user_id,
+              event_id: ticket.event_id,
+            });
+
+          if (checkinError) throw checkinError;
+
+          // Create timeline event for check-in
+          const { error: timelineError } = await supabase
+            .from('timeline_events')
+            .insert({
+              event_id: ticket.event_id,
+              user_id: ticket.user_id,
+              event_type: 'checkin',
+              description: `${ticket.users.first_name} ${ticket.users.last_name} has arrived!`,
+            });
+
+          if (timelineError) throw timelineError;
+
           setScanResult({
             status: 'success',
             message: `Valid ticket. Entry granted for ${ticket.users.first_name} ${ticket.users.last_name}.`,
           });
+
           await fetchAdmittedPeople();
+
           if (audioRef.current) {
             audioRef.current.play();
           }
         }
       } catch (error) {
         console.error('Error:', error);
-        setScanResult({ status: 'error', message: 'Invalid ticket' });
+        setScanResult({
+          status: 'error',
+          message: 'Invalid ticket',
+        });
       }
       setShowScanner(false);
     }
