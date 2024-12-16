@@ -3,7 +3,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import DatePicker from 'react-datepicker';
-import { format, isSameDay } from 'date-fns';
+import { format, isSameDay, isAfter, isBefore, addHours } from 'date-fns';
 import { IoLocationOutline } from 'react-icons/io5';
 import { FaCheckCircle, FaTimesCircle } from 'react-icons/fa';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -20,8 +20,6 @@ export default function Home() {
   const [admittedPeople, setAdmittedPeople] = useState([]);
   const scannerRef = useRef(null);
   const audioRef = useRef(null);
-
-  // !TODO the users admitted list stays present even if I jump to a different event, thjis list should be unique for each event.
 
   useEffect(() => {
     fetchEvents();
@@ -43,16 +41,12 @@ export default function Home() {
       scannerRef.current
         .start(
           { facingMode: 'environment' },
-          {
-            fps: 10,
-            qrbox: 250,
-          },
+          { fps: 10, qrbox: 250 },
           onScanSuccess,
           onScanError
         )
         .catch((err) => {
           console.error('Failed to start scanner:', err);
-          // Show a user-friendly message
           alert(
             'Camera access is required to scan QR codes. Please allow camera access and try again.'
           );
@@ -61,155 +55,215 @@ export default function Home() {
   };
 
   async function fetchEvents() {
-    const { data, error } = await supabase
-      .from('events')
-      .select('*')
-      .order('event_date', { ascending: true });
-    if (error) console.error('Error fetching events:', error);
-    else setEvents(data);
+    try {
+      const { data, error } = await supabase
+        .from('events')
+        .select('*')
+        .order('event_date', { ascending: true });
+
+      if (error) throw error;
+      setEvents(data || []);
+    } catch (error) {
+      console.error('Error fetching events:', error);
+    }
   }
 
-  // const onScanSuccess = async (decodedText) => {
-  //   if (selectedEvent) {
-  //     if (scannerRef.current) {
-  //       scannerRef.current.pause(true);
-  //     }
+  const isTicketValid = (eventDate) => {
+    const now = new Date();
+    const eventDateTime = new Date(eventDate);
+    const eventEndTime = addHours(eventDateTime, 12); // Event valid for 12 hours after start
 
-  //     try {
-  //       const { data: ticket, error } = await supabase
-  //         .from('userevents')
-  //         .select('*, events(event_name), users(first_name, last_name)')
-  //         .eq('qr_code', decodedText)
-  //         .single();
-
-  //       if (error) throw error;
-
-  //       if (ticket.event_id !== selectedEvent.id) {
-  //         setScanResult({
-  //           status: 'error',
-  //           message: `This ticket is for event "${ticket.events.event_name}" and not valid for this event.`,
-  //         });
-  //       } else if (ticket.used) {
-  //         setScanResult({ status: 'error', message: 'Ticket already used' });
-  //       } else {
-  //         const { error: updateError } = await supabase
-  //           .from('userevents')
-  //           .update({ used: true })
-  //           .eq('id', ticket.id);
-
-  //         if (updateError) throw updateError;
-
-  //         setScanResult({
-  //           status: 'success',
-  //           message: `Valid ticket. Entry granted for ${ticket.users.first_name} ${ticket.users.last_name}.`,
-  //         });
-  //         await fetchAdmittedPeople();
-  //         if (audioRef.current) {
-  //           audioRef.current.play();
-  //         }
-  //       }
-  //     } catch (error) {
-  //       console.error('Error:', error);
-  //       setScanResult({ status: 'error', message: 'Invalid ticket' });
-  //     }
-  //     setShowScanner(false);
-  //   }
-  // };
+    return (
+      isAfter(now, addHours(eventDateTime, -2)) && // Allow entry 2 hours before event
+      isBefore(now, eventEndTime)
+    );
+  };
 
   const onScanSuccess = async (decodedText) => {
-    if (selectedEvent) {
-      if (scannerRef.current) {
-        scannerRef.current.pause(true);
-      }
+    if (!selectedEvent) {
+      setScanResult({
+        status: 'error',
+        message: 'Please select an event first',
+      });
+      return;
+    }
 
-      try {
-        const { data: ticket, error } = await supabase
-          .from('userevents')
-          .select('*, events(event_name), users(first_name, last_name)')
-          .eq('qr_code', decodedText)
-          .single();
+    if (scannerRef.current) {
+      scannerRef.current.pause(true);
+    }
 
-        if (error) throw error;
+    try {
+      console.log('Scanning QR code:', decodedText);
 
-        if (ticket.event_id !== selectedEvent.id) {
-          setScanResult({
-            status: 'error',
-            message: `This ticket is for event "${ticket.events.event_name}" and not valid for this event.`,
-          });
-        } else if (ticket.used) {
-          setScanResult({
-            status: 'error',
-            message: 'Ticket already used',
-          });
-        } else {
-          // Update ticket to used
-          const { error: updateError } = await supabase
-            .from('userevents')
-            .update({ used: true })
-            .eq('id', ticket.id);
+      // Verify the ticket exists and get all necessary data
+      const { data: ticket, error: ticketError } = await supabase
+        .from('userevents')
+        .select(
+          `
+          id,
+          event_id,
+          user_id,
+          used,
+          purchase_date,
+          events (
+            id,
+            event_name,
+            event_date
+          ),
+          users (
+            id,
+            first_name,
+            last_name
+          )
+        `
+        )
+        .eq('qr_code', decodedText)
+        .maybeSingle();
 
-          if (updateError) throw updateError;
+      if (ticketError) throw ticketError;
 
-          // Create check-in record
-          const { error: checkinError } = await supabase
-            .from('checkins')
-            .insert({
-              user_id: ticket.user_id,
-              event_id: ticket.event_id,
-            });
-
-          if (checkinError) throw checkinError;
-
-          // Create timeline event for check-in
-          const { error: timelineError } = await supabase
-            .from('timeline_events')
-            .insert({
-              event_id: ticket.event_id,
-              user_id: ticket.user_id,
-              event_type: 'checkin',
-              description: `${ticket.users.first_name} ${ticket.users.last_name} has arrived!`,
-            });
-
-          if (timelineError) throw timelineError;
-
-          setScanResult({
-            status: 'success',
-            message: `Valid ticket. Entry granted for ${ticket.users.first_name} ${ticket.users.last_name}.`,
-          });
-
-          await fetchAdmittedPeople();
-
-          if (audioRef.current) {
-            audioRef.current.play();
-          }
-        }
-      } catch (error) {
-        console.error('Error:', error);
+      if (!ticket) {
         setScanResult({
           status: 'error',
-          message: 'Invalid ticket',
+          message: 'Invalid ticket - not found in system',
         });
+        return;
       }
+
+      // Check if ticket is for this event
+      if (ticket.event_id !== selectedEvent.id) {
+        setScanResult({
+          status: 'error',
+          message: `This ticket is for "${
+            ticket.events.event_name
+          }" on ${format(
+            new Date(ticket.events.event_date),
+            'MMM d, yyyy'
+          )}. Not valid for this event.`,
+        });
+        return;
+      }
+
+      // Check if ticket has been used
+      if (ticket.used) {
+        setScanResult({
+          status: 'error',
+          message: 'Ticket has already been used',
+        });
+        return;
+      }
+
+      // Check if ticket is being used at the right time
+      if (!isTicketValid(ticket.events.event_date)) {
+        setScanResult({
+          status: 'error',
+          message:
+            'Ticket is not valid at this time. Entry is allowed from 2 hours before until 12 hours after event start.',
+        });
+        return;
+      }
+
+      // Check for existing check-in
+      const { data: existingCheckin } = await supabase
+        .from('checkins')
+        .select('id')
+        .match({
+          user_id: ticket.user_id,
+          event_id: ticket.event_id,
+        })
+        .maybeSingle();
+
+      if (existingCheckin) {
+        setScanResult({
+          status: 'error',
+          message: `${ticket.users.first_name} ${ticket.users.last_name} is already checked in to this event.`,
+        });
+        return;
+      }
+
+      // Begin transaction-like operations
+
+      // 1. Mark ticket as used
+      const { error: updateError } = await supabase
+        .from('userevents')
+        .update({ used: true })
+        .eq('id', ticket.id);
+
+      if (updateError) throw updateError;
+
+      // 2. Create check-in record
+      const { error: checkinError } = await supabase.from('checkins').insert({
+        user_id: ticket.user_id,
+        event_id: ticket.event_id,
+        checked_in_at: new Date().toISOString(),
+      });
+
+      if (checkinError) throw checkinError;
+
+      // 3. Create timeline event
+      const { error: timelineError } = await supabase
+        .from('timeline_events')
+        .insert({
+          event_id: ticket.event_id,
+          user_id: ticket.user_id,
+          event_type: 'checkin',
+          description: `${ticket.users.first_name} ${ticket.users.last_name} has arrived!`,
+          created_at: new Date().toISOString(),
+        });
+
+      if (timelineError) throw timelineError;
+
+      // Success!
+      setScanResult({
+        status: 'success',
+        message: `Welcome, ${ticket.users.first_name} ${ticket.users.last_name}! Check-in successful.`,
+      });
+
+      await fetchAdmittedPeople();
+
+      if (audioRef.current) {
+        audioRef.current.play();
+      }
+    } catch (error) {
+      console.error('Error processing ticket:', error);
+      setScanResult({
+        status: 'error',
+        message: 'Error processing ticket. Please try again.',
+      });
+    } finally {
       setShowScanner(false);
     }
   };
 
   const onScanError = (error) => {
-    console.warn(error);
+    console.warn('QR Scan Error:', error);
   };
 
   async function fetchAdmittedPeople() {
     if (!selectedEvent) return;
 
-    const { data, error } = await supabase
-      .from('userevents')
-      .select('*, users(first_name, last_name)')
-      .eq('event_id', selectedEvent.id)
-      .eq('used', true)
-      .order('purchase_date', { ascending: false });
+    try {
+      const { data, error } = await supabase
+        .from('userevents')
+        .select(
+          `
+          id,
+          purchase_date,
+          users (
+            first_name,
+            last_name
+          )
+        `
+        )
+        .eq('event_id', selectedEvent.id)
+        .eq('used', true)
+        .order('purchase_date', { ascending: false });
 
-    if (error) console.error('Error fetching admitted people:', error);
-    else setAdmittedPeople(data);
+      if (error) throw error;
+      setAdmittedPeople(data || []);
+    } catch (error) {
+      console.error('Error fetching admitted people:', error);
+    }
   }
 
   const handleScannerToggle = () => {
