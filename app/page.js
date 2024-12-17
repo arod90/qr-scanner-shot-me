@@ -1,9 +1,14 @@
 'use client';
-
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../lib/supabaseClient';
 import DatePicker from 'react-datepicker';
-import { format, isSameDay, isAfter, isBefore, addHours } from 'date-fns';
+import {
+  format,
+  addHours,
+  subHours,
+  isWithinInterval,
+  isSameDay,
+} from 'date-fns';
 import { IoLocationOutline } from 'react-icons/io5';
 import { FaCheckCircle, FaTimesCircle } from 'react-icons/fa';
 import { Html5Qrcode } from 'html5-qrcode';
@@ -54,7 +59,7 @@ export default function Home() {
     }
   };
 
-  async function fetchEvents() {
+  const fetchEvents = async () => {
     try {
       const { data, error } = await supabase
         .from('events')
@@ -66,17 +71,17 @@ export default function Home() {
     } catch (error) {
       console.error('Error fetching events:', error);
     }
-  }
+  };
 
   const isTicketValid = (eventDate) => {
     const now = new Date();
     const eventDateTime = new Date(eventDate);
-    const eventEndTime = addHours(eventDateTime, 12); // Event valid for 12 hours after start
+    const eventWindow = {
+      start: subHours(eventDateTime, 2),
+      end: addHours(eventDateTime, 36), // Extended to 36 hours after start
+    };
 
-    return (
-      isAfter(now, addHours(eventDateTime, -2)) && // Allow entry 2 hours before event
-      isBefore(now, eventEndTime)
-    );
+    return isWithinInterval(now, eventWindow);
   };
 
   const onScanSuccess = async (decodedText) => {
@@ -94,8 +99,6 @@ export default function Home() {
 
     try {
       console.log('Scanning QR code:', decodedText);
-
-      // Verify the ticket exists and get all necessary data
       const { data: ticket, error: ticketError } = await supabase
         .from('userevents')
         .select(
@@ -121,7 +124,6 @@ export default function Home() {
         .maybeSingle();
 
       if (ticketError) throw ticketError;
-
       if (!ticket) {
         setScanResult({
           status: 'error',
@@ -130,7 +132,6 @@ export default function Home() {
         return;
       }
 
-      // Check if ticket is for this event
       if (ticket.event_id !== selectedEvent.id) {
         setScanResult({
           status: 'error',
@@ -144,7 +145,6 @@ export default function Home() {
         return;
       }
 
-      // Check if ticket has been used
       if (ticket.used) {
         setScanResult({
           status: 'error',
@@ -153,17 +153,15 @@ export default function Home() {
         return;
       }
 
-      // Check if ticket is being used at the right time
       if (!isTicketValid(ticket.events.event_date)) {
         setScanResult({
           status: 'error',
           message:
-            'Ticket is not valid at this time. Entry is allowed from 2 hours before until 12 hours after event start.',
+            'Ticket is not valid at this time. Entry is allowed from 2 hours before until 36 hours after event start.',
         });
         return;
       }
 
-      // Check for existing check-in
       const { data: existingCheckin } = await supabase
         .from('checkins')
         .select('id')
@@ -182,7 +180,6 @@ export default function Home() {
       }
 
       // Begin transaction-like operations
-
       // 1. Mark ticket as used
       const { error: updateError } = await supabase
         .from('userevents')
@@ -213,7 +210,6 @@ export default function Home() {
 
       if (timelineError) throw timelineError;
 
-      // Success!
       setScanResult({
         status: 'success',
         message: `Welcome, ${ticket.users.first_name} ${ticket.users.last_name}! Check-in successful.`,
@@ -239,7 +235,7 @@ export default function Home() {
     console.warn('QR Scan Error:', error);
   };
 
-  async function fetchAdmittedPeople() {
+  const fetchAdmittedPeople = async () => {
     if (!selectedEvent) return;
 
     try {
@@ -264,7 +260,7 @@ export default function Home() {
     } catch (error) {
       console.error('Error fetching admitted people:', error);
     }
-  }
+  };
 
   const handleScannerToggle = () => {
     setShowScanner(!showScanner);
@@ -385,6 +381,7 @@ export default function Home() {
           </ul>
         </>
       )}
+
       <audio ref={audioRef} src="/success-chime.mp3" />
     </div>
   );
