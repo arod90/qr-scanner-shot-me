@@ -77,7 +77,7 @@ export default function Home() {
     const now = new Date();
     const eventDateTime = new Date(eventDate);
     const eventWindow = {
-      start: subHours(eventDateTime, 2),
+      start: subHours(eventDateTime, 12), // 12 hours change back to 6 after testing
       end: addHours(eventDateTime, 36), // Extended to 36 hours after start
     };
 
