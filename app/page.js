@@ -195,7 +195,10 @@ export default function Home() {
         checked_in_at: new Date().toISOString(),
       });
 
-      if (checkinError) throw checkinError;
+      if (checkinError) {
+        console.error('Error creating check-in:', checkinError);
+        throw checkinError;
+      }
 
       // 3. Create timeline event
       const { error: timelineError } = await supabase
